@@ -137,6 +137,8 @@ class _LruMap {
   }
 
   void operator []=(String key, CacheResponse resp) {
+    assert(!entries.containsKey(key));
+
     final entrySize = _computeSize(resp);
     // Entry too heavy, skip it
     if (entrySize > maxEntrySize) return;
@@ -162,21 +164,26 @@ class _LruMap {
   }
 
   CacheResponse? remove(String key) {
-    final entry = entries[key];
+    final entry = entries.remove(key);
     if (entry == null) return null;
-
     _currentSize -= entry.size;
-    entries.remove(key);
+
+    entry.previous?.next = entry.next;
+    entry.next?.previous = entry.previous;
 
     if (entry == _tail) {
+      assert(entry.previous == null);
       _tail = entry.next;
-      _tail?.previous = null;
     }
     if (entry == _head) {
+      assert(entry.next == null);
       _head = entry.previous;
-      _head?.next = null;
     }
 
+    assert(_tail == null || entries.containsKey(_tail!.key));
+    assert(_head == null || entries.containsKey(_head!.key));
+    entry.next = null;
+    entry.previous = null;
     return entry.value;
   }
 
@@ -187,12 +194,8 @@ class _LruMap {
       _tail = link.next;
     }
 
-    if (link.previous != null) {
-      link.previous!.next = link.next;
-    }
-    if (link.next != null) {
-      link.next!.previous = link.previous;
-    }
+    link.previous?.next = link.next;
+    link.next?.previous = link.previous;
 
     _head?.next = link;
     link.previous = _head;
