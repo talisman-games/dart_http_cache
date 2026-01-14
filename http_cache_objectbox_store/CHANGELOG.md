@@ -1,3 +1,9 @@
+## next
+- chore: Min SDK is now 3.6.0.
+
+## 2.0.1
+- fix: save bytes array as unsigned bytes
+
 ## 2.0.0
 - feat: Saves response status code.
 - chore: Updated dependencies.

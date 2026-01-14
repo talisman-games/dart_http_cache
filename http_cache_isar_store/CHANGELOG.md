@@ -1,3 +1,9 @@
+## next
+- chore: Min SDK is now 3.6.0.
+
+## 3.0.0-dev.1
+- feat: Update dependencies and migrate to isar_community.
+
 ## 2.0.1
 - fix: Cleanup staled entries on store instantiation.
 

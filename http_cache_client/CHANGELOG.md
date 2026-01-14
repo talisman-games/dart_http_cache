@@ -1,3 +1,12 @@
+## next
+- chore: Min SDK is now 3.6.0.
+
+## 1.0.4
+- chore: Updated dependencies.
+
+## 1.0.3
+- fix: Allow keyBuilder to depend on request body.
+
 ## 1.0.2
 - fix: BaseRequest now has `headers` getter instead of `headerValuesAsList`.
 - chore: Updated dependencies.

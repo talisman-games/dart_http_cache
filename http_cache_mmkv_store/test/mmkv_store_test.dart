@@ -1,16 +1,14 @@
-import 'dart:io';
-
-import 'package:http_cache_isar_store/http_cache_isar_store.dart';
-import 'package:http_cache_store_tester/common_store_testing.dart';
-import 'package:isar_community/isar.dart';
+import 'package:http_cache_mmkv_store/http_cache_mmkv_store.dart';
 import 'package:test/test.dart';
+import 'package:http_cache_store_tester/common_store_testing.dart';
 
-void main() {
-  late IsarCacheStore store;
+import 'fake/mmkv_fake.dart';
+
+void main() async {
+  late MMKVCacheStore store;
 
   setUpAll(() async {
-    store = IsarCacheStore('${Directory.current.path}/test');
-    await Isar.initializeIsarCore(download: true);
+    store = MMKVCacheStore.fromMMKV(MMKVFake());
   });
 
   setUp(() async {
@@ -31,9 +29,4 @@ void main() {
   test('pathExists', () => pathExists(store));
   test('deleteFromPath', () => deleteFromPath(store));
   test('getFromPath', () => getFromPath(store));
-  test(
-    'Concurrent access',
-    () async => await concurrentAccess(store),
-    timeout: Timeout(Duration(minutes: 2)),
-  );
 }
