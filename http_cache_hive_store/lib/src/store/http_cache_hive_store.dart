@@ -12,24 +12,23 @@ class HiveCacheStore extends CacheStore {
   /// The Hive instance to use.
   final HiveInterface hive;
 
+  /// Home directory of the box.
+  String? directory;
+
   LazyBox<CacheResponse>? _box;
 
   /// Initialize cache store by giving Hive a home directory.
   /// [directory] can be null only on web platform or if you already use Hive
   /// in your app.
   ///
-  /// [hiveInterface] is the Hive instance to use. Mostly used for testing.
-  /// If not provided, the default [Hive] instance will be used.
+  /// [hiveInterface] is the Hive instance to use.
+  /// If not provided, the default [Hive] implementation will be used.
   HiveCacheStore(
-    String? directory, {
+    this.directory, {
     this.hiveBoxName = 'dio_cache',
     this.encryptionCipher,
     HiveInterface? hiveInterface,
   }) : hive = hiveInterface ?? Hive {
-    if (directory != null) {
-      hive.init(directory);
-    }
-
     if (!hive.isAdapterRegistered(_CacheResponseAdapter._typeId)) {
       hive.registerAdapter(_CacheResponseAdapter());
     }
@@ -148,6 +147,7 @@ class HiveCacheStore extends CacheStore {
     _box ??= await hive.openLazyBox<CacheResponse>(
       hiveBoxName,
       encryptionCipher: encryptionCipher,
+      path: directory,
     );
 
     return Future.value(_box);
