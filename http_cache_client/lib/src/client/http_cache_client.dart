@@ -18,17 +18,18 @@ class CacheClient extends http.BaseClient {
   final http.Client _inner;
 
   CacheClient(this._inner, {required CacheOptions options})
-      : assert(options.store != null),
-        _options = options,
-        _store = options.store!;
+    : assert(options.store != null),
+      _options = options,
+      _store = options.store!;
 
   @override
   Future<http.Response> get(
     Uri url, {
     Map<String, String>? headers,
     CacheOptions? options,
-  }) =>
-      _onRequest(_getMethod, url, headers, _getCacheOptions(options));
+  }) => _onRequest(
+    _prepareRequest(_getCacheOptions(options), _getMethod, url, headers),
+  );
 
   @override
   Future<http.Response> post(
@@ -37,9 +38,16 @@ class CacheClient extends http.BaseClient {
     Object? body,
     Encoding? encoding,
     CacheOptions? options,
-  }) =>
-      _onRequest(
-          _postMethod, url, headers, _getCacheOptions(options), body, encoding);
+  }) => _onRequest(
+    _prepareRequest(
+      _getCacheOptions(options),
+      _postMethod,
+      url,
+      headers,
+      body,
+      encoding,
+    ),
+  );
 
   @override
   Future<String> read(
@@ -47,8 +55,7 @@ class CacheClient extends http.BaseClient {
     Map<String, String>? headers,
     CacheOptions? options,
   }) async {
-    final response =
-        await get(url, headers: headers, options: _getCacheOptions(options));
+    final response = await get(url, headers: headers, options: options);
     _checkResponseSuccess(url, response);
     return response.body;
   }
@@ -59,15 +66,34 @@ class CacheClient extends http.BaseClient {
     Map<String, String>? headers,
     CacheOptions? options,
   }) async {
-    final response =
-        await get(url, headers: headers, options: _getCacheOptions(options));
+    final response = await get(url, headers: headers, options: options);
     _checkResponseSuccess(url, response);
     return response.bodyBytes;
   }
 
   @override
-  Future<http.StreamedResponse> send(http.BaseRequest request) {
-    return _inner.send(request);
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    // Non-cacheable methods stream straight through; cacheable ones funnel
+    // through the cache flow so send() (and any verb built on it) is cached too.
+    if (_shouldSkip(request.method, _options)) {
+      return _inner.send(request);
+    }
+
+    final wrapped = HttpBaseRequest(request, _options, DateTime.now());
+    return _streamedResponse(await _onRequest(wrapped));
+  }
+
+  http.StreamedResponse _streamedResponse(http.Response response) {
+    return http.StreamedResponse(
+      Stream.value(response.bodyBytes),
+      response.statusCode,
+      contentLength: response.bodyBytes.length,
+      request: response.request,
+      headers: response.headers,
+      isRedirect: response.isRedirect,
+      persistentConnection: response.persistentConnection,
+      reasonPhrase: response.reasonPhrase,
+    );
   }
 
   /// Prepares a [Request] from given parameters.
@@ -100,14 +126,19 @@ class CacheClient extends http.BaseClient {
 
   /// Sends a non-streaming [Request] and returns a non-streaming [Response].
   Future<http.Response> _sendUnstreamedRequest(HttpBaseRequest request) async {
+    final http.Response response;
     try {
-      final response = await http.Response.fromStream(
-        await send(request.inner),
+      // Use the inner client directly: send() is the cache funnel and would
+      // recurse back here for cacheable methods.
+      response = await http.Response.fromStream(
+        await _inner.send(request.inner),
       );
-      return _onResponse(response, request);
-    } on http.ClientException catch (ex) {
+    } catch (ex) {
+      // Any transport error (ClientException, SocketException, timeout, …)
+      // may fall back to cache when allowed.
       return _onError(ex, request);
     }
+    return _onResponse(response, request);
   }
 
   /// Throws an error if [response] is not successful.

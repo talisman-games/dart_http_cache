@@ -15,145 +15,159 @@ class DioCacheInterceptor extends Interceptor {
   final CacheStore _store;
 
   DioCacheInterceptor({required CacheOptions options})
-      : assert(options.store != null),
-        _options = options,
-        _store = options.store!;
+    : assert(options.store != null),
+      _options = options,
+      _store = options.store!;
+
+  /// Runs [body] and converts any thrown error into a rejected [DioException]
+  /// via [reject]. Centralizes cache-failure handling for the request/response
+  /// hooks so a store exception surfaces as an error instead of hanging.
+  Future<void> _guard(
+    RequestOptions options,
+    Future<void> Function() body,
+    void Function(DioException error) reject,
+  ) async {
+    try {
+      await body();
+    } catch (e, st) {
+      reject(DioException(requestOptions: options, error: e, stackTrace: st));
+    }
+  }
 
   @override
-  void onRequest(
-    RequestOptions options,
-    RequestInterceptorHandler handler,
-  ) async {
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
     // Add time when the request has been sent
     // for further expiry calculation.
     options.extra[extraRequestSentDateKey] = DateTime.now();
 
-    final cacheOptions = _getCacheOptions(options);
+    _guard(options, () async {
+      final cacheOptions = _getCacheOptions(options);
 
-    if (_shouldSkip(options, options: cacheOptions)) {
-      handler.next(options);
-      return;
-    }
-
-    // Early ends if policy does not require cache lookup.
-    final policy = cacheOptions.policy;
-    if (policy != CachePolicy.request && policy != CachePolicy.forceCache) {
-      handler.next(options);
-      return;
-    }
-
-    final strategy = await CacheStrategyFactory(
-      request: DioBaseRequest(options),
-      cacheResponse: await _loadCacheResponse(
-        options,
-        readHeaders: true,
-        readBody: false,
-      ),
-      cacheOptions: cacheOptions,
-    ).compute();
-
-    var cacheResponse = strategy.cacheResponse;
-    if (cacheResponse != null) {
-      // Cache hit
-
-      // Finish reading content from cached response
-      cacheResponse = await cacheResponse.readContent(
-        cacheOptions,
-        readHeaders: false,
-        readBody: true,
-      );
-
-      // Update cached response if needed
-      cacheResponse = await _updateCacheResponse(cacheResponse, cacheOptions);
-
-      handler.resolve(
-        cacheResponse.toResponse(options, fromNetwork: false),
-        true,
-      );
-    } else {
-      // Requests with conditional request if available
-      // or requests with given options
-      if (strategy.request is DioBaseRequest) {
-        handler.next((strategy.request as DioBaseRequest).request);
-      } else {
+      if (_shouldSkip(options, options: cacheOptions)) {
         handler.next(options);
-      }
-    }
-  }
-
-  @override
-  void onResponse(
-    Response response,
-    ResponseInterceptorHandler handler,
-  ) async {
-    final cacheOptions = _getCacheOptions(response.requestOptions);
-
-    if (_shouldSkip(
-      response.requestOptions,
-      response: response,
-      options: cacheOptions,
-    )) {
-      handler.next(response);
-      return;
-    }
-
-    if (cacheOptions.policy == CachePolicy.noCache) {
-      // Delete previous potential cached response
-      await _getCacheStore(cacheOptions).delete(
-        _getCacheKey(cacheOptions, response.requestOptions),
-      );
-    }
-
-    // Is status 304 being set as valid status?
-    if (response.statusCode == 304) {
-      // Update cache response with response header values
-      final cacheResponse = await _loadResponse(response.requestOptions);
-      if (cacheResponse != null) {
-        response = cacheResponse..updateCacheHeaders(response);
-      }
-    }
-
-    await _saveResponse(
-      response,
-      cacheOptions,
-      statusCode: response.statusCode,
-    );
-
-    handler.next(response);
-  }
-
-  @override
-  void onError(
-    DioException err,
-    ErrorInterceptorHandler handler,
-  ) async {
-    final cacheOptions = _getCacheOptions(err.requestOptions);
-
-    if (_shouldSkip(err.requestOptions, options: cacheOptions, error: err)) {
-      handler.next(err);
-      return;
-    }
-
-    if (isCacheCheckAllowed(err.response?.statusCode, cacheOptions)) {
-      // Retrieve response from cache
-      final cacheResponse = await _loadResponse(err.requestOptions);
-
-      if (err.response != null && cacheResponse != null) {
-        // Update cache response with response header values
-        await _saveResponse(
-          cacheResponse..updateCacheHeaders(err.response!),
-          cacheOptions,
-          statusCode: err.response?.statusCode,
-        );
-      }
-
-      // Resolve with found cached response
-      if (cacheResponse != null) {
-        handler.resolve(cacheResponse);
         return;
       }
-    }
 
-    handler.next(err);
+      // Early ends if policy does not require cache lookup.
+      final policy = cacheOptions.policy;
+      if (policy != CachePolicy.request && policy != CachePolicy.forceCache) {
+        handler.next(options);
+        return;
+      }
+
+      final strategy = await CacheStrategyFactory(
+        request: DioBaseRequest(options),
+        cacheResponse: await _loadCacheResponse(
+          options,
+          readHeaders: true,
+          readBody: false,
+        ),
+        cacheOptions: cacheOptions,
+      ).compute();
+
+      var cacheResponse = strategy.cacheResponse;
+      if (cacheResponse != null) {
+        // Cache hit
+
+        // Finish reading content from cached response
+        cacheResponse = await cacheResponse.readContent(
+          cacheOptions,
+          readHeaders: false,
+          readBody: true,
+        );
+
+        // Update cached response if needed
+        cacheResponse = await _updateCacheResponse(cacheResponse, cacheOptions);
+
+        handler.resolve(
+          cacheResponse.toResponse(options, fromNetwork: false),
+          true,
+        );
+      } else {
+        // Forward with any conditional headers.
+        handler.next((strategy.request as DioBaseRequest).request);
+      }
+    }, (err) => handler.reject(err, true));
+  }
+
+  @override
+  void onResponse(Response response, ResponseInterceptorHandler handler) {
+    _guard(response.requestOptions, () async {
+      final cacheOptions = _getCacheOptions(response.requestOptions);
+
+      if (_shouldSkip(
+        response.requestOptions,
+        response: response,
+        options: cacheOptions,
+      )) {
+        handler.next(response);
+        return;
+      }
+
+      if (cacheOptions.policy == CachePolicy.noCache) {
+        // Delete previous potential cached response
+        await _getCacheStore(
+          cacheOptions,
+        ).delete(_getCacheKey(cacheOptions, response.requestOptions));
+      }
+
+      // Is status 304 being set as valid status?
+      if (response.statusCode == 304) {
+        // Update cache response with response header values
+        final cacheResponse = await _loadResponse(response.requestOptions);
+        if (cacheResponse != null) {
+          response = cacheResponse..updateCacheHeaders(response);
+        } else {
+          // No cached entry to update (evicted or never stored) — a 304 with
+          // no body cannot be turned into a usable entry; pass it through.
+          handler.next(response);
+          return;
+        }
+      }
+
+      await _saveResponse(
+        response,
+        cacheOptions,
+        statusCode: response.statusCode,
+      );
+
+      handler.next(response);
+    }, (err) => handler.reject(err, true));
+  }
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) async {
+    try {
+      final cacheOptions = _getCacheOptions(err.requestOptions);
+
+      if (_shouldSkip(err.requestOptions, options: cacheOptions, error: err)) {
+        handler.next(err);
+        return;
+      }
+
+      if (isCacheCheckAllowed(err.response?.statusCode, cacheOptions)) {
+        // Retrieve response from cache
+        final cacheResponse = await _loadResponse(err.requestOptions);
+
+        if (err.response != null && cacheResponse != null) {
+          // Update cache response with response header values
+          await _saveResponse(
+            cacheResponse..updateCacheHeaders(err.response!),
+            cacheOptions,
+            statusCode: err.response?.statusCode,
+          );
+        }
+
+        // Resolve with found cached response
+        if (cacheResponse != null) {
+          handler.resolve(cacheResponse);
+          return;
+        }
+      }
+
+      handler.next(err);
+    } catch (_) {
+      handler.next(err);
+    }
   }
 }

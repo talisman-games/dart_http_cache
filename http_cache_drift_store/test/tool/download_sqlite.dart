@@ -49,8 +49,9 @@ Future<void> downloadSqlite() async {
 
   print('Downloading and compiling sqlite3 for drift test');
 
-  final temporaryDir =
-      await Directory.systemTemp.createTemp('drift-compile-sqlite3');
+  final temporaryDir = await Directory.systemTemp.createTemp(
+    'drift-compile-sqlite3',
+  );
   final temporaryDirPath = temporaryDir.path;
 
   if (Platform.isWindows) {
@@ -82,7 +83,7 @@ Future<void> _downloadForWindows({
   await response.stream.pipe(File(sqlite3Zip).openWrite());
 
   final inputStream = InputFileStream(sqlite3Zip);
-  final archive = ZipDecoder().decodeBuffer(inputStream);
+  final archive = ZipDecoder().decodeStream(inputStream);
 
   for (final file in archive.files) {
     if (file.isFile && file.name == 'sqlite3.dll') {
@@ -102,8 +103,10 @@ Future<void> _downloadForNix({
 }) async {
   if (Platform.isLinux) return;
 
-  await _run('curl $_url --output sqlite.tar.gz',
-      workingDirectory: temporaryDirPath);
+  await _run(
+    'curl $_url --output sqlite.tar.gz',
+    workingDirectory: temporaryDirPath,
+  );
   await _run('tar zxvf sqlite.tar.gz', workingDirectory: temporaryDirPath);
 
   final sqlitePath = p.join(temporaryDirPath, 'sqlite-autoconf-$_version');
@@ -120,13 +123,13 @@ Future<void> _downloadForNix({
   await File(p.join(sqlitePath, 'sqlite3')).copy(p.join(target, 'sqlite3'));
 
   if (Platform.isLinux) {
-    await File(p.join(sqlitePath, '.libs', 'libsqlite3.so')).copy(
-      p.join(target, 'libsqlite3.so'),
-    );
+    await File(
+      p.join(sqlitePath, '.libs', 'libsqlite3.so'),
+    ).copy(p.join(target, 'libsqlite3.so'));
   } else if (Platform.isMacOS) {
-    await File(p.join(sqlitePath, '.libs', 'libsqlite3.dylib')).copy(
-      p.join(target, 'libsqlite3.dylib'),
-    );
+    await File(
+      p.join(sqlitePath, '.libs', 'libsqlite3.dylib'),
+    ).copy(p.join(target, 'libsqlite3.dylib'));
   }
 
   await File(p.join(target, 'version')).writeAsString(_version);

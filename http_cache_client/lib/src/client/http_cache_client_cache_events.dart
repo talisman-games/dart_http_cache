@@ -4,16 +4,9 @@ const String _getMethod = 'GET';
 const String _postMethod = 'POST';
 
 extension _CacheClientEvents on CacheClient {
-  Future<http.Response> _onRequest(
-    String method,
-    Uri url,
-    Map<String, String>? headers,
-    CacheOptions options, [
-    Object? body,
-    Encoding? encoding,
-  ]) async {
-    final request =
-        _prepareRequest(options, method, url, headers, body, encoding);
+  Future<http.Response> _onRequest(HttpBaseRequest request) async {
+    final options = request.options;
+    final method = request.inner.method;
 
     if (!_shouldSkip(method, options)) {
       // Early ends if policy does not require cache lookup.
@@ -72,7 +65,13 @@ extension _CacheClientEvents on CacheClient {
       await _getCacheStore(request.options).delete(_getCacheKey(request));
     }
 
-    if (isCacheCheckAllowed(response.statusCode, request.options)) {
+    if (response.statusCode == 304) {
+      // Refresh the cached entry's headers from the 304, or pass the bodyless
+      // 304 through untouched when there's no cached entry to update.
+      final cacheResponse = await _loadResponse(request);
+      if (cacheResponse == null) return response;
+      response = cacheResponse..updateCacheHeaders(response);
+    } else if (isCacheCheckAllowed(response.statusCode, request.options)) {
       // Update cache response with response header values
       final cacheResponse = await _loadResponse(request);
       if (cacheResponse != null) {
@@ -86,7 +85,7 @@ extension _CacheClientEvents on CacheClient {
   }
 
   Future<http.Response> _onError(
-    http.ClientException exception,
+    Object exception,
     HttpBaseRequest request,
   ) async {
     if (_shouldSkip(request.inner.method, request.options)) {

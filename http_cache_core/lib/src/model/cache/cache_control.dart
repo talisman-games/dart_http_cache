@@ -3,11 +3,13 @@ import 'package:http_cache_core/src/model/utils/contants.dart';
 import 'package:string_scanner/string_scanner.dart';
 
 final _knownAttributes = RegExp(
-  r'max-age|max-stale|min-fresh|must-revalidate|public|private|no-cache|no-store',
+  r'^(max-age|max-stale|min-fresh|must-revalidate|public|private|no-cache|no-store)$',
 );
 
 const _maxAgeHeader = 'max-age';
 const _maxStaleHeader = 'max-stale';
+// https://datatracker.ietf.org/doc/html/rfc7234#section-5.2.1.2: bare max-stale (no delta-seconds) means accept any stale age.
+const _maxStaleUnlimited = 315360000; // 10 years in seconds
 const _minFreshHeader = 'min-fresh';
 const _mustRevalidateHeader = 'must-revalidate';
 const _privateHeader = 'private';
@@ -91,26 +93,33 @@ class CacheControl {
       List<String> other,
     ) {
       scanner.scan(whitespace);
-      scanner.expect(token);
+      if (scanner.isDone) return;
 
-      final attribute = scanner.lastMatch![0]!;
+      try {
+        scanner.expect(token);
 
-      if (_knownAttributes.hasMatch(attribute)) {
-        if (scanner.scan('=')) {
-          scanner.expect(token);
-          parameters[attribute] = scanner.lastMatch![0]!;
+        final attribute = scanner.lastMatch![0]!;
+
+        if (_knownAttributes.hasMatch(attribute)) {
+          if (scanner.scan('=')) {
+            scanner.expect(token);
+            parameters[attribute] = scanner.lastMatch![0]!;
+          } else {
+            parameters[attribute] = attribute;
+          }
         } else {
-          parameters[attribute] = attribute;
+          if (scanner.scan('=')) {
+            scanner.expect(token);
+            other.add('$attribute=${scanner.lastMatch![0]!}');
+          } else {
+            other.add(attribute);
+          }
         }
-      } else {
-        if (scanner.scan('=')) {
-          scanner.expect(token);
-          other.add('$attribute=${scanner.lastMatch![0]!}');
-        } else {
-          other.add(attribute);
-        }
+        scanner.scan(whitespace);
+      } on FormatException {
+        // Non-token character (e.g. '{', '}') — skip this directive.
+        scanner.scan(RegExp(r'[^,]*'));
       }
-      scanner.scan(whitespace);
     }
 
     headerValues ??= [];
@@ -121,18 +130,23 @@ class CacheControl {
     for (var value in headerValues) {
       if (value.isNotEmpty) {
         final scanner = StringScanner(value);
-        parseHeaderValue(scanner, parameters, other);
-
-        while (scanner.scan(',')) {
+        while (!scanner.isDone) {
           parseHeaderValue(scanner, parameters, other);
+
+          // Consume the separator, so malformed input never throw.
+          if (!scanner.scan(',')) {
+            scanner.scan(RegExp(r'[^,]*'));
+            scanner.scan(',');
+          }
         }
-        scanner.expectDone();
       }
     }
 
     return CacheControl(
       maxAge: int.tryParse(parameters[_maxAgeHeader] ?? '') ?? -1,
-      maxStale: int.tryParse(parameters[_maxStaleHeader] ?? '') ?? -1,
+      maxStale: parameters.containsKey(_maxStaleHeader)
+          ? (int.tryParse(parameters[_maxStaleHeader]!) ?? _maxStaleUnlimited)
+          : -1,
       minFresh: int.tryParse(parameters[_minFreshHeader] ?? '') ?? -1,
       mustRevalidate: parameters.containsKey(_mustRevalidateHeader),
       privacy: parameters[_publicHeader] ?? parameters[_privateHeader],
@@ -147,7 +161,11 @@ class CacheControl {
     final header = <String>[];
 
     if (maxAge != -1) header.add('$_maxAgeHeader=$maxAge');
-    if (maxStale != -1) header.add('$_maxStaleHeader=$maxStale');
+    if (maxStale == _maxStaleUnlimited) {
+      header.add(_maxStaleHeader);
+    } else if (maxStale != -1) {
+      header.add('$_maxStaleHeader=$maxStale');
+    }
     if (minFresh != -1) header.add('$_minFreshHeader=$minFresh');
     if (mustRevalidate) header.add(_mustRevalidateHeader);
     if (privacy != null) header.add(privacy!);
@@ -158,10 +176,11 @@ class CacheControl {
     return header.join(', ');
   }
 
+  static const _eq = DeepCollectionEquality();
+
   @override
   bool operator ==(covariant CacheControl other) {
     if (identical(this, other)) return true;
-    final listEquals = const DeepCollectionEquality().equals;
 
     return other.maxAge == maxAge &&
         other.privacy == privacy &&
@@ -170,7 +189,7 @@ class CacheControl {
         other.maxStale == maxStale &&
         other.minFresh == minFresh &&
         other.mustRevalidate == mustRevalidate &&
-        listEquals(other.other, this.other);
+        _eq.equals(other.other, this.other);
   }
 
   @override
@@ -182,6 +201,6 @@ class CacheControl {
         maxStale.hashCode ^
         minFresh.hashCode ^
         mustRevalidate.hashCode ^
-        other.hashCode;
+        Object.hashAll(other);
   }
 }

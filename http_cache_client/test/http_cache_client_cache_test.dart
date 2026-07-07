@@ -50,16 +50,16 @@ void main() {
     final key = options.keyBuilder(url: resp.request!.url);
     expect(await store.exists(key), isTrue);
     final cacheResp1 = await store.get(key);
+    expect(resp.headers[ageHeader], equals('1'));
 
     final resp304 = await getOk(options);
     expect(resp304.statusCode, equals(200));
     final cacheResp2 = await store.get(key);
-
-    expect(
-        cacheResp1!.copyWith(
-            requestDate: cacheResp2!.requestDate,
-            responseDate: cacheResp2.responseDate),
-        equals(cacheResp2));
+    expect(resp304.headers[ageHeader], equals('10'));
+    expect(cacheResp1, isNotNull);
+    expect(cacheResp2, isNotNull);
+    expect(cacheResp2!.eTag, equals('5678'));
+    expect(cacheResp2.getHeaders()[ageHeader], equals('10'));
   });
 
   test('Fetch noCache policy', () async {
@@ -111,10 +111,12 @@ void main() {
 
     await Future.delayed(Duration(seconds: 1));
 
-    resp = await getOk(options.copyWith(
-      policy: CachePolicy.refresh,
-      maxStale: Duration(minutes: 10),
-    ));
+    resp = await getOk(
+      options.copyWith(
+        policy: CachePolicy.refresh,
+        maxStale: Duration(minutes: 10),
+      ),
+    );
 
     expect(resp.statusCode, equals(200));
     expect(await store.exists(key), isTrue);
@@ -170,8 +172,10 @@ void main() {
     expect(await store.exists(key), isTrue);
 
     resp = await getOk(
-      options
-          .copyWith(hitCacheOnErrorCodes: [500], policy: CachePolicy.refresh),
+      options.copyWith(
+        hitCacheOnErrorCodes: [500],
+        policy: CachePolicy.refresh,
+      ),
       headers: {'x-err': '500'},
     );
 
@@ -257,5 +261,92 @@ void main() {
 
     final key = options.keyBuilder(url: resp.request!.url);
     expect(await store.exists(key), isFalse);
+  });
+
+  test('304 with evicted entry is passed through without storing', () async {
+    final resp200 = await getOk(options);
+    final key = options.keyBuilder(url: resp200.request!.url);
+    expect(await store.exists(key), isTrue);
+
+    // Evict the entry between requests.
+    await store.delete(key);
+    expect(await store.exists(key), isFalse);
+
+    // Known etag triggers a 304 from the mock.
+    final resp304 = await getOk(options, headers: {ifNoneMatchHeader: '1234'});
+    expect(resp304.statusCode, equals(304));
+    expect(await store.exists(key), isFalse);
+  });
+
+  test(
+    'custom keyBuilder: conditional headers are stripped from the key',
+    () async {
+      final customOptions = CacheOptions(
+        store: store,
+        keyBuilder:
+            ({required Uri url, Map<String, String>? headers, Object? body}) =>
+                '${url.path}:${headers?[ifNoneMatchHeader] ?? ''}',
+      );
+
+      // Cache miss — key is '/ok:'.
+      final resp1 = await getOk(customOptions);
+      expect(resp1.statusCode, equals(200));
+      expect(await store.exists('/ok:'), isTrue);
+
+      // Revalidation injects if-none-match; the key must stay '/ok:'.
+      await getOk(customOptions);
+      expect(await store.exists('/ok:'), isTrue);
+      expect(await store.exists('/ok:1234'), isFalse);
+      expect(await store.exists('/ok:5678'), isFalse);
+    },
+  );
+
+  test(
+    'repeated cache hits within half window do not rewrite the store',
+    () async {
+      final opts = CacheOptions(
+        store: store,
+        policy: CachePolicy.forceCache,
+        maxStale: const Duration(minutes: 10),
+      );
+
+      await getOkNoDirective(opts);
+      final key = opts.keyBuilder(url: Uri.http('ok.org', '/ok-nodirective'));
+      final cache1 = await store.get(key);
+
+      await Future.delayed(const Duration(milliseconds: 5));
+      await getOkNoDirective(opts);
+      await getOkNoDirective(opts);
+
+      final cache2 = await store.get(key);
+      expect(cache2!.maxStale, equals(cache1!.maxStale));
+    },
+  );
+
+  test('send() caches a cacheable GET and revalidates from cache', () async {
+    final resp = await sendGet(options);
+    expect(resp.statusCode, equals(200));
+
+    final key = options.keyBuilder(url: resp.request!.url);
+    expect(await store.exists(key), isTrue);
+
+    // Second send revalidates against the stored entry (age refreshed to 10).
+    final resp2 = await sendGet(options);
+    expect(resp2.headers[ageHeader], equals('10'));
+  });
+
+  test('non-ClientException network error falls back to cache', () async {
+    final failOptions = options.copyWith(hitCacheOnNetworkFailure: true);
+
+    final resp = await getNonClientError(failOptions);
+    final key = options.keyBuilder(url: resp.request!.url);
+    expect(await store.exists(key), isTrue);
+
+    final cached = await getNonClientError(
+      failOptions,
+      headers: {'x-err': '1'},
+    );
+    expect(cached.statusCode, equals(200));
+    expect(jsonDecode(cached.body)['path'], equals('/ok'));
   });
 }

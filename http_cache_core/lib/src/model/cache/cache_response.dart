@@ -13,7 +13,7 @@ class CacheResponse {
   final CacheControl cacheControl;
 
   /// Response body
-  List<int>? content;
+  final List<int>? content;
 
   /// Response Date header
   final DateTime? date;
@@ -25,7 +25,7 @@ class CacheResponse {
   final DateTime? expires;
 
   /// Response headers
-  List<int>? headers;
+  final List<int>? headers;
 
   /// Key used by store
   final String key;
@@ -85,8 +85,8 @@ class CacheResponse {
 
     final maxStaleMillis =
         (!cacheControl.mustRevalidate && rqCacheCtrl.maxStale > -1)
-            ? rqCacheCtrl.maxStale * 1000
-            : 0;
+        ? rqCacheCtrl.maxStale * 1000
+        : 0;
     final minFreshMillis = max(0, rqCacheCtrl.minFresh * 1000);
 
     if (!cacheControl.noCache &&
@@ -97,25 +97,29 @@ class CacheResponse {
     return true;
   }
 
-  Map<String, String> getHeaders() {
-    if (headers case final headers?) {
-      final map = jsonDecode(utf8.decode(headers));
+  late final Map<String, String> _cachedHeaders = _parseHeaders();
+
+  Map<String, String> getHeaders() => _cachedHeaders;
+
+  Map<String, String> _parseHeaders() {
+    if (headers case final h?) {
+      final map = jsonDecode(utf8.decode(h));
 
       /// Get headers flatten to String & case insensitive
-      final h = LinkedHashMap<String, String>(
+      final result = LinkedHashMap<String, String>(
         equals: (a, b) => a.toLowerCase() == b.toLowerCase(),
         hashCode: (key) => key.toLowerCase().hashCode,
       );
 
       for (var header in map.entries) {
         if (header.value is Iterable) {
-          h[header.key] = header.value.join(',');
+          result[header.key] = header.value.join(',');
         } else if (header.value != null) {
-          h[header.key] = header.value.toString();
+          result[header.key] = header.value.toString();
         }
       }
 
-      return h;
+      return result;
     }
 
     return {};
@@ -130,8 +134,9 @@ class CacheResponse {
     final receivedResponseMillis = responseDate.millisecondsSinceEpoch;
     final dateMillis = date?.millisecondsSinceEpoch;
 
-    final apparentReceivedAge =
-        (dateMillis != null) ? max(0, receivedResponseMillis - dateMillis) : 0;
+    final apparentReceivedAge = (dateMillis != null)
+        ? max(0, receivedResponseMillis - dateMillis)
+        : 0;
 
     final headers = getHeaders();
     final ageValue = headers[ageHeader];
@@ -160,8 +165,9 @@ class CacheResponse {
 
     final checkedExpires = expires;
     if (checkedExpires != null) {
-      final delta =
-          checkedExpires.difference(date ?? responseDate).inMilliseconds;
+      final delta = checkedExpires
+          .difference(date ?? responseDate)
+          .inMilliseconds;
       return delta > 0 ? delta : 0;
     }
 
@@ -170,10 +176,14 @@ class CacheResponse {
       // should be defaulted to 10% of the document's age
       // at the time it was served.
       // Default expiration dates aren't used for URIs containing a query.
-      final delta = (date ?? requestDate)
-          .difference(HttpDate.parse(lastModified!))
-          .inMilliseconds;
-      return ((delta > 0) ? delta / 10 : 0).round();
+      try {
+        final delta = (date ?? requestDate)
+            .difference(HttpDate.parse(lastModified!))
+            .inMilliseconds;
+        return ((delta > 0) ? delta / 10 : 0).round();
+      } catch (_) {
+        // Malformed Last-Modified header — skip heuristic freshness.
+      }
     }
 
     return 0;
@@ -187,10 +197,12 @@ class CacheResponse {
     final cipher = options.cipher;
 
     return copyWith(
-      content:
-          readBody ? await cipher?.decryptContent(content) ?? content : null,
-      headers:
-          readHeaders ? await cipher?.decryptContent(headers) ?? headers : null,
+      content: readBody
+          ? await cipher?.decryptContent(content) ?? content
+          : null,
+      headers: readHeaders
+          ? await cipher?.decryptContent(headers) ?? headers
+          : null,
     );
   }
 
@@ -237,17 +249,18 @@ class CacheResponse {
     );
   }
 
+  static const _eq = DeepCollectionEquality();
+
   @override
   bool operator ==(covariant CacheResponse other) {
     if (identical(this, other)) return true;
-    final listEquals = const DeepCollectionEquality().equals;
 
     return other.cacheControl == cacheControl &&
-        listEquals(other.content, content) &&
+        _eq.equals(other.content, content) &&
         other.date == date &&
         other.eTag == eTag &&
         other.expires == expires &&
-        listEquals(other.headers, headers) &&
+        _eq.equals(other.headers, headers) &&
         other.key == key &&
         other.lastModified == lastModified &&
         other.maxStale == maxStale &&
@@ -261,11 +274,11 @@ class CacheResponse {
   @override
   int get hashCode {
     return cacheControl.hashCode ^
-        content.hashCode ^
+        Object.hashAll(content ?? const []) ^
         date.hashCode ^
         eTag.hashCode ^
         expires.hashCode ^
-        headers.hashCode ^
+        Object.hashAll(headers ?? const []) ^
         key.hashCode ^
         lastModified.hashCode ^
         maxStale.hashCode ^

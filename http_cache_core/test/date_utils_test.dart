@@ -14,11 +14,10 @@ void main() {
       );
     });
 
-    test('returns DateTime when invalid', () {
-      expect(
-        getExpiresHeaderValue('Thu, 1 Jan 1972'),
-        equals(DateTime.fromMicrosecondsSinceEpoch(0, isUtc: true)),
-      );
+    test('malformed header treated as already expired (RFC 7234 §5.3)', () {
+      final epochPast = DateTime.fromMicrosecondsSinceEpoch(0, isUtc: true);
+      expect(getExpiresHeaderValue('Thu, 1 Jan 1972'), equals(epochPast));
+      expect(getExpiresHeaderValue('not-a-date'), equals(epochPast));
     });
   });
 

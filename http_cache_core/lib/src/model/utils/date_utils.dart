@@ -5,7 +5,8 @@ DateTime? getExpiresHeaderValue(String? headerValue) {
     try {
       return HttpDate.parse(expires);
     } catch (_) {
-      // Invalid date format => meaning something already expired
+      // RFC 7234 §5.3: an invalid Expires value (notably "0") MUST be treated
+      // as already expired. Return an epoch-past date so the response is stale.
       return DateTime.fromMicrosecondsSinceEpoch(0, isUtc: true);
     }
   }

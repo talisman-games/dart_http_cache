@@ -14,10 +14,8 @@ class MemCacheStore extends CacheStore {
   /// To prevent making this store useless, be sure to
   /// respect the following lower-limit rule: maxEntrySize * 5 <= maxSize.
   ///
-  MemCacheStore({
-    int maxSize = 7340032,
-    int maxEntrySize = 512000,
-  }) : _cache = _LruMap(maxSize: maxSize, maxEntrySize: maxEntrySize);
+  MemCacheStore({int maxSize = 7340032, int maxEntrySize = 512000})
+    : _cache = _LruMap(maxSize: maxSize, maxEntrySize: maxEntrySize);
 
   @override
   Future<void> clean({
@@ -61,10 +59,7 @@ class MemCacheStore extends CacheStore {
     RegExp pathPattern, {
     Map<String, String?>? queryParams,
   }) async {
-    final responses = await getFromPath(
-      pathPattern,
-      queryParams: queryParams,
-    );
+    final responses = await getFromPath(pathPattern, queryParams: queryParams);
 
     for (final response in responses) {
       _cache.remove(response.key);
@@ -124,7 +119,7 @@ class _LruMap {
   final int maxEntrySize;
 
   _LruMap({required this.maxSize, required this.maxEntrySize}) {
-    assert(maxEntrySize != maxSize);
+    assert(maxEntrySize < maxSize);
     assert(maxEntrySize * 5 <= maxSize);
   }
 
@@ -137,8 +132,6 @@ class _LruMap {
   }
 
   void operator []=(String key, CacheResponse resp) {
-    assert(!entries.containsKey(key));
-
     final entrySize = _computeSize(resp);
     // Entry too heavy, skip it
     if (entrySize > maxEntrySize) return;
@@ -164,26 +157,29 @@ class _LruMap {
   }
 
   CacheResponse? remove(String key) {
-    final entry = entries.remove(key);
+    final entry = entries[key];
     if (entry == null) return null;
+
     _currentSize -= entry.size;
+    entries.remove(key);
+
+    if (entry == _tail) {
+      _tail = entry.next;
+      _tail?.previous = null;
+    }
+    if (entry == _head) {
+      _head = entry.previous;
+      _head?.next = null;
+    }
 
     entry.previous?.next = entry.next;
     entry.next?.previous = entry.previous;
-
-    if (entry == _tail) {
-      assert(entry.previous == null);
-      _tail = entry.next;
-    }
-    if (entry == _head) {
-      assert(entry.next == null);
-      _head = entry.previous;
-    }
 
     assert(_tail == null || entries.containsKey(_tail!.key));
     assert(_head == null || entries.containsKey(_head!.key));
     entry.next = null;
     entry.previous = null;
+
     return entry.value;
   }
 
@@ -194,8 +190,12 @@ class _LruMap {
       _tail = link.next;
     }
 
-    link.previous?.next = link.next;
-    link.next?.previous = link.previous;
+    if (link.previous != null) {
+      link.previous!.next = link.next;
+    }
+    if (link.next != null) {
+      link.next!.previous = link.previous;
+    }
 
     _head?.next = link;
     link.previous = _head;

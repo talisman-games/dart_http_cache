@@ -7,8 +7,10 @@ class CacheStrategy {
   final CacheResponse? cacheResponse;
 
   const CacheStrategy(this.request, this.cacheResponse)
-      : assert(request != null && cacheResponse == null ||
-            request == null && cacheResponse != null);
+    : assert(
+        request != null && cacheResponse == null ||
+            request == null && cacheResponse != null,
+      );
 }
 
 /// A factory class for creating cache strategies based on HTTP requests and responses.
@@ -85,6 +87,11 @@ class CacheStrategyFactory {
       }
     }
 
+    // If-None-Match takes precedence over If-Modified-Since (RFC 7232 §6).
+    if (request.headers[ifNoneMatchHeader] != null) {
+      request.setHeader(ifModifiedSinceHeader, null);
+    }
+
     if (_hasConditions(request, rqCacheCtrl)) {
       return CacheStrategy(request, null);
     }
@@ -130,6 +137,7 @@ class CacheStrategyFactory {
     // Always go to network for uncacheable response codes
     final statusCode = response.statusCode;
     if (statusCode == null) return false;
+    if (!allowedStatusCodes.contains(statusCode)) return false;
 
     // Skip download
     if (response.isAttachment()) return false;
@@ -167,7 +175,7 @@ class CacheStrategyFactory {
     var result = response.headers[etagHeader] != null;
     result |= response.headers[lastModifiedHeader] != null;
     result |= response.headers[expiresHeader] != null;
-    result |= respCacheCtrl.maxAge > 0;
+    result |= respCacheCtrl.maxAge > -1;
 
     return result;
   }
@@ -175,12 +183,8 @@ class CacheStrategyFactory {
   /// Returns true if the request already contains conditions that save
   /// the server from sending a response that the client has locally.
   bool _hasConditions(BaseRequest request, CacheControl rqCacheCtrl) {
-    final ifNoneMatch = request.headers[ifNoneMatchHeader];
-    if (ifNoneMatch != null) {
-      request.setHeader(ifModifiedSinceHeader, null);
-    }
-
     return rqCacheCtrl.noCache ||
+        request.headers[ifNoneMatchHeader] != null ||
         request.headers[ifModifiedSinceHeader] != null;
   }
 }
