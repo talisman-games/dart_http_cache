@@ -8,7 +8,7 @@ void main() {
   late ObjectBoxCacheStore store;
 
   setUpAll(() {
-    store = ObjectBoxCacheStore(storePath: Directory.current.path);
+    store = ObjectBoxCacheStore(storePath: '${Directory.current.path}/test');
   });
 
   setUp(() async {
@@ -29,4 +29,9 @@ void main() {
   test('pathExists', () => pathExists(store));
   test('deleteFromPath', () => deleteFromPath(store));
   test('getFromPath', () => getFromPath(store));
+  test(
+    'Concurrent access',
+    () async => await concurrentAccess(store),
+    timeout: Timeout(Duration(minutes: 2)),
+  );
 }

@@ -1,6 +1,22 @@
 import 'package:hive_ce/hive.dart';
 import 'package:http_cache_core/http_cache_core.dart';
 
+/// Registers the adapters required to (de)serialize cache entries.
+///
+/// Shared by [HiveCacheStore] and [IsolatedHiveCacheStore], whose [HiveInterface]
+/// and [IsolatedHiveInterface] both implement [TypeRegistry].
+void registerHiveCacheAdapters(TypeRegistry registry) {
+  if (!registry.isAdapterRegistered(CacheResponseAdapter.id)) {
+    registry.registerAdapter(CacheResponseAdapter());
+  }
+  if (!registry.isAdapterRegistered(CacheControlAdapter.id)) {
+    registry.registerAdapter(CacheControlAdapter());
+  }
+  if (!registry.isAdapterRegistered(CachePriorityAdapter.id)) {
+    registry.registerAdapter(CachePriorityAdapter());
+  }
+}
+
 /// Interface abstracting Hive box operations for both regular and isolated Hive.
 ///
 /// This interface unifies the API between [LazyBox] and [IsolatedLazyBox]
@@ -133,7 +149,7 @@ class CacheResponseAdapter extends TypeAdapter<CacheResponse> {
       responseDate: fields[10] as DateTime,
       url: fields[11] as String,
       requestDate: fields[12] as DateTime,
-      statusCode: fields[13] as int? ?? 304,
+      statusCode: fields[13] as int? ?? 200,
     );
   }
 
@@ -190,7 +206,7 @@ class CacheControlAdapter extends TypeAdapter<CacheControl> {
       privacy: fields[1] as String?,
       noCache: fields[2] as bool? ?? false,
       noStore: fields[3] as bool? ?? false,
-      other: (fields[4] as List).cast<String>(),
+      other: (fields[4] as List?)?.cast<String>() ?? const [],
       maxStale: fields[5] as int? ?? -1,
       minFresh: fields[6] as int? ?? -1,
       mustRevalidate: fields[7] as bool? ?? false,

@@ -136,6 +136,12 @@ class FileCacheStore extends CacheStore {
 
     final result = await lock.synchronized(() => computation());
 
+    // No pending/running call chained on this lock: safe to drop it so
+    // `_locks` doesn't grow forever with one entry per key ever accessed.
+    if (!lock.locked) {
+      _locks.remove(key);
+    }
+
     return result;
   }
 
@@ -155,7 +161,7 @@ class FileCacheStore extends CacheStore {
 
     return [
       ...Int32List.fromList([
-        response.content?.length ?? 0,
+        response.content?.length ?? -1,
         etag.length,
         response.headers?.length ?? 0,
         lastModified.length,
@@ -167,7 +173,7 @@ class FileCacheStore extends CacheStore {
         responseDate.length,
         requestDate.length,
         statusCode.length,
-      ]).buffer.asInt8List(),
+      ]).buffer.asUint8List(),
       ...response.content ?? [],
       ...etag,
       ...response.headers ?? [],
@@ -186,80 +192,72 @@ class FileCacheStore extends CacheStore {
   Future<CacheResponse?> _deserializeContent(File? file) async {
     if (file == null) return null;
 
-    final data = await file.readAsBytes();
-
     try {
+      final data = await file.readAsBytes();
+
       // Get field sizes
-      // 11 fields. int is encoded with 32 bits from Int8List
+      // 12 fields. int is encoded with 32 bits from Uint8List
       var i = 12 * 4;
-      final sizes = Int8List.fromList(
-        data.take(i).toList(),
-      ).buffer.asInt32List();
+      final sizes = data.sublist(0, i).buffer.asInt32List();
 
       var fieldIndex = 0;
 
       var size = sizes[fieldIndex++];
-      final content = size != 0 ? data.skip(i).take(size).toList() : null;
+      final content = size >= 0 ? data.sublist(i, i + size) : null;
+
+      i += size < 0 ? 0 : size;
+      size = sizes[fieldIndex++];
+      final etag = size != 0 ? utf8.decode(data.sublist(i, i + size)) : null;
 
       i += size;
       size = sizes[fieldIndex++];
-      final etag = size != 0
-          ? utf8.decode(data.skip(i).take(size).toList())
-          : null;
-
-      i += size;
-      size = sizes[fieldIndex++];
-      final headers = size != 0 ? data.skip(i).take(size).toList() : null;
+      final headers = size != 0 ? data.sublist(i, i + size) : null;
 
       i += size;
       size = sizes[fieldIndex++];
       final lastModified = size != 0
-          ? utf8.decode(data.skip(i).take(size).toList())
+          ? utf8.decode(data.sublist(i, i + size))
           : null;
 
       i += size;
       size = sizes[fieldIndex++];
       final maxStale = size != 0
-          ? utf8.decode(data.skip(i).take(size).toList())
+          ? utf8.decode(data.sublist(i, i + size))
           : null;
 
       i += size;
       size = sizes[fieldIndex++];
-      final url = utf8.decode(data.skip(i).take(size).toList());
+      final url = utf8.decode(data.sublist(i, i + size));
 
       i += size;
       size = sizes[fieldIndex++];
       final cacheControl = size != 0
-          ? utf8.decode(data.skip(i).take(size).toList())
+          ? utf8.decode(data.sublist(i, i + size))
           : null;
 
       i += size;
       size = sizes[fieldIndex++];
-      final date = size != 0
-          ? utf8.decode(data.skip(i).take(size).toList())
-          : null;
+      final date = size != 0 ? utf8.decode(data.sublist(i, i + size)) : null;
 
       i += size;
       size = sizes[fieldIndex++];
-      final expires = size != 0
-          ? utf8.decode(data.skip(i).take(size).toList())
-          : null;
+      final expires = size != 0 ? utf8.decode(data.sublist(i, i + size)) : null;
 
       i += size;
       size = sizes[fieldIndex++];
-      final responseDate = utf8.decode(data.skip(i).take(size).toList());
+      final responseDate = utf8.decode(data.sublist(i, i + size));
 
       i += size;
       size = sizes[fieldIndex++];
       final rawRequestDate = size != 0
-          ? utf8.decode(data.skip(i).take(size).toList())
+          ? utf8.decode(data.sublist(i, i + size))
           : null;
       final requestDate = DateTime.parse(rawRequestDate!);
 
       i += size;
       size = sizes[fieldIndex++];
       final statusCode = size != 0
-          ? utf8.decode(data.skip(i).take(size).toList())
+          ? utf8.decode(data.sublist(i, i + size))
           : null;
 
       return CacheResponse(
@@ -281,7 +279,7 @@ class FileCacheStore extends CacheStore {
         requestDate: requestDate,
         responseDate: DateTime.parse(responseDate),
         url: url,
-        statusCode: statusCode != null ? int.tryParse(statusCode) ?? 304 : 304,
+        statusCode: statusCode != null ? int.tryParse(statusCode) ?? 200 : 200,
       );
     } catch (e) {
       // File is corrupted. Throw it away, we can't recover it.

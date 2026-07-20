@@ -1,5 +1,6 @@
 import 'package:drift/drift.dart';
 import 'package:http_cache_core/http_cache_core.dart';
+import 'package:http_cache_drift_store/src/store/database.steps.dart';
 
 export 'db_platform/db_platform.dart';
 
@@ -16,20 +17,18 @@ class DioCacheDatabase extends _$DioCacheDatabase {
   MigrationStrategy get migration {
     return MigrationStrategy(
       onCreate: (Migrator m) => m.createAll(),
-      onUpgrade: (Migrator m, int from, int to) async {
-        if (to < from) {
-          throw Exception("Can't downgrade database");
-        }
-
-        await transaction(() async {
-          if (from < 2) {
-            await m.addColumn(dioCache, dioCache.requestDate);
-          }
-          if (from < 3) {
-            await m.addColumn(dioCache, dioCache.statusCode);
-          }
-        });
-      },
+      onUpgrade: stepByStep(
+        from1To2: (m, schema) async {
+          await m.addColumn(dioCache, dioCache.requestDate);
+        },
+        from2To3: (Migrator m, Schema3 schema) async {
+          await m.addColumn(dioCache, dioCache.statusCode);
+          // Backfill pre-v3 rows so they don't misreport as 304.
+          await (update(dioCache)..where((t) => t.statusCode.isNull())).write(
+            const DioCacheCompanion(statusCode: Value(200)),
+          );
+        },
+      ),
     );
   }
 }
@@ -47,8 +46,7 @@ class DioCacheDao extends DatabaseAccessor<DioCacheDatabase>
       ..where((t) {
         var expr = t.priority.isSmallerOrEqualValue(priorityOrBelow.index);
         if (staleOnly) {
-          expr =
-              expr & t.maxStale.isSmallerOrEqualValue(DateTime.now().toUtc());
+          expr = expr & t.maxStale.isSmallerThanValue(DateTime.now().toUtc());
         }
         return expr;
       });
@@ -62,7 +60,7 @@ class DioCacheDao extends DatabaseAccessor<DioCacheDatabase>
         final expr = t.cacheKey.equals(key);
 
         return staleOnly
-            ? expr & t.maxStale.isSmallerOrEqualValue(DateTime.now().toUtc())
+            ? expr & t.maxStale.isSmallerThanValue(DateTime.now().toUtc())
             : expr;
       });
 
@@ -133,7 +131,7 @@ class DioCacheDao extends DatabaseAccessor<DioCacheDatabase>
           data.responseDate.subtract(const Duration(milliseconds: 150)),
       responseDate: data.responseDate,
       url: data.url,
-      statusCode: data.statusCode ?? 304,
+      statusCode: data.statusCode ?? 200,
     );
   }
 
