@@ -175,6 +175,11 @@ class _LruMap {
     entry.previous?.next = entry.next;
     entry.next?.previous = entry.previous;
 
+    assert(_tail == null || entries.containsKey(_tail!.key));
+    assert(_head == null || entries.containsKey(_head!.key));
+    entry.next = null;
+    entry.previous = null;
+
     return entry.value;
   }
 
