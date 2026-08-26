@@ -16,9 +16,7 @@ class BackupCacheStore extends CacheStore {
   /// Secondary cache store
   final CacheStore secondary;
 
-  BackupCacheStore({required this.primary, required this.secondary}) {
-    clean(staleOnly: true);
-  }
+  BackupCacheStore({required this.primary, required this.secondary});
 
   @override
   Future<void> clean({
