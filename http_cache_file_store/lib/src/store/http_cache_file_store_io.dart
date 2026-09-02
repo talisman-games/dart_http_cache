@@ -13,9 +13,7 @@ class FileCacheStore extends CacheStore {
   final Map<CachePriority, Directory> _directories;
   final Map<String, Lock> _locks = {};
 
-  FileCacheStore(String directory) : _directories = _genDirectories(directory) {
-    clean(staleOnly: true);
-  }
+  FileCacheStore(String directory) : _directories = _genDirectories(directory);
 
   @override
   Future<void> clean({
